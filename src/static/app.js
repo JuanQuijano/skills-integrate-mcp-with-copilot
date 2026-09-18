@@ -3,6 +3,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const loginForm = document.getElementById("login-form");
+  const logoutButton = document.getElementById("logout-button");
+  const authStatus = document.getElementById("auth-status");
+  let currentUser = null;
+
+  function authHeaders() {
+    return currentUser ? { Authorization: `Bearer ${currentUser.token}` } : {};
+  }
+
+  function updateAuthControls() {
+    const isStaff = currentUser?.role === "staff";
+    loginForm.classList.toggle("hidden", Boolean(currentUser));
+    logoutButton.classList.toggle("hidden", !currentUser);
+    signupForm.classList.toggle("hidden", currentUser?.role !== "student");
+    authStatus.textContent = currentUser
+      ? `Signed in as ${currentUser.email} (${currentUser.role})`
+      : "Log in to sign up or manage participants.";
+    document.querySelectorAll(".delete-btn").forEach((button) => {
+      button.classList.toggle("hidden", !isStaff);
+    });
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -60,6 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".delete-btn").forEach((button) => {
         button.addEventListener("click", handleUnregister);
       });
+      updateAuthControls();
     } catch (error) {
       activitiesList.innerHTML =
         "<p>Failed to load activities. Please try again later.</p>";
@@ -80,6 +102,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: authHeaders(),
         }
       );
 
@@ -124,6 +147,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: authHeaders(),
         }
       );
 
@@ -155,6 +179,35 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("login-email").value,
+        password: document.getElementById("login-password").value,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      messageDiv.textContent = result.detail || "Unable to log in";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+      return;
+    }
+    currentUser = result;
+    loginForm.reset();
+    updateAuthControls();
+    messageDiv.classList.add("hidden");
+  });
+
+  logoutButton.addEventListener("click", () => {
+    currentUser = null;
+    updateAuthControls();
+  });
+
   // Initialize app
+  updateAuthControls();
   fetchActivities();
 });

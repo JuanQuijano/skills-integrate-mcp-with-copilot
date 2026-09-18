@@ -5,7 +5,13 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+import hashlib
+import json
+import secrets
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
@@ -18,6 +24,51 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+users_file = current_dir / "users.json"
+sessions = {}
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+def load_users():
+    with users_file.open(encoding="utf-8") as file:
+        return {user["email"]: user for user in json.load(file)}
+
+
+def get_current_user(authorization: Annotated[str | None, Header()] = None):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.removeprefix("Bearer ")
+    user = sessions.get(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def require_role(role):
+    def dependency(user=Depends(get_current_user)):
+        if user["role"] != role:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+
+    return dependency
+
+
+@app.post("/auth/login")
+def login(credentials: LoginRequest):
+    user = load_users().get(credentials.email)
+    password_hash = hashlib.sha256(credentials.password.encode()).hexdigest()
+    if not user or not secrets.compare_digest(user["password_hash"], password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = secrets.token_urlsafe(32)
+    sessions[token] = {"email": user["email"], "role": user["role"]}
+    return {"token": token, "email": user["email"], "role": user["role"]}
 
 # In-memory activity database
 activities = {
@@ -89,8 +140,12 @@ def get_activities():
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, email: str,
+                        user=Depends(require_role("student"))):
     """Sign up a student for an activity"""
+    if email != user["email"]:
+        raise HTTPException(status_code=403, detail="Students can only manage their own registration")
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -111,7 +166,8 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, email: str,
+                             user=Depends(require_role("staff"))):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:
