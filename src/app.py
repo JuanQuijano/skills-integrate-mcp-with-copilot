@@ -148,7 +148,9 @@ DEFAULT_ACTIVITIES = {
 def build_activity_response(activity_name: str, activity: dict):
     participant_count = len(activity["participants"])
     seats_remaining = max(activity["max_participants"] - participant_count, 0)
-    occupancy_rate = round((participant_count / activity["max_participants"]) * 100, 1)
+    occupancy_rate = 0.0
+    if activity["max_participants"] > 0:
+        occupancy_rate = round((participant_count / activity["max_participants"]) * 100, 1)
     return {
         "name": activity_name,
         "description": activity["description"],

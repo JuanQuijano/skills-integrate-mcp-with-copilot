@@ -33,7 +33,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function canViewDashboard() {
-    return currentUser && currentUser.role !== "student";
+    return (
+      currentUser &&
+      ["staff", "coordinator"].includes(currentUser.role)
+    );
   }
 
   function escapeHtml(value) {
