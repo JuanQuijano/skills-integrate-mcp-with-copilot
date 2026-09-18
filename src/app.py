@@ -161,11 +161,11 @@ def build_activity_response(activity_name: str, activity: dict):
     }
 
 
-def build_activity_history():
+def build_activity_history(source_activities: dict):
     timestamp = current_timestamp()
     return {
         name: [{"timestamp": timestamp, "participant_count": len(details["participants"])}]
-        for name, details in activities.items()
+        for name, details in source_activities.items()
     }
 
 
@@ -195,7 +195,7 @@ def add_notification(audience: str, message: str, activity_name: str, student_em
 
 
 activities = deepcopy(DEFAULT_ACTIVITIES)
-activity_history = build_activity_history()
+activity_history = build_activity_history(activities)
 
 
 @app.get("/")

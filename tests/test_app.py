@@ -17,7 +17,7 @@ class ActivityDashboardTests(unittest.TestCase):
         app_module.activities.clear()
         app_module.activities.update(copy.deepcopy(app_module.DEFAULT_ACTIVITIES))
         app_module.activity_history.clear()
-        app_module.activity_history.update(app_module.build_activity_history())
+        app_module.activity_history.update(app_module.build_activity_history(app_module.activities))
         self.student_user = {"email": "student@mergington.edu", "role": "student"}
         self.staff_user = {"email": "teacher@mergington.edu", "role": "staff"}
 

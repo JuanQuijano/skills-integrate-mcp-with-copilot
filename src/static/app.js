@@ -36,6 +36,23 @@ document.addEventListener("DOMContentLoaded", () => {
     return currentUser && currentUser.role !== "student";
   }
 
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (character) => {
+      const entities = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
+      return entities[character];
+    });
+  }
+
+  function safeNumber(value) {
+    return Number.isFinite(Number(value)) ? Number(value) : 0;
+  }
+
   function updateAuthControls() {
     const isStaff = currentUser?.role === "staff";
     loginForm.classList.toggle("hidden", Boolean(currentUser));
@@ -66,7 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
       .map(
         (notification) => `
           <article class="notification-card">
-            <p>${notification.message}</p>
+            <p>${escapeHtml(notification.message)}</p>
             <small>${new Date(notification.timestamp).toLocaleString()}</small>
           </article>
         `
@@ -99,11 +116,11 @@ document.addEventListener("DOMContentLoaded", () => {
         (activity) => `
           <div class="chart-row">
             <div class="chart-label">
-              <span>${activity.name}</span>
-              <span>${activity.participants_count}/${activity.participants_count + activity.seats_remaining}</span>
+              <span>${escapeHtml(activity.name)}</span>
+              <span>${safeNumber(activity.participants_count)}/${safeNumber(activity.participants_count) + safeNumber(activity.seats_remaining)}</span>
             </div>
             <div class="chart-bar-track">
-              <div class="chart-bar-fill" style="width: ${activity.occupancy_rate}%"></div>
+              <div class="chart-bar-fill" style="width: ${Math.max(0, Math.min(safeNumber(activity.occupancy_rate), 100))}%"></div>
             </div>
           </div>
         `
@@ -124,14 +141,14 @@ document.addEventListener("DOMContentLoaded", () => {
           ${dashboard.activities
             .map((activity) => {
               const trend = activity.history
-                .map((entry) => `${entry.participant_count}`)
+                .map((entry) => `${safeNumber(entry.participant_count)}`)
                 .join(" → ");
               return `
                 <tr>
-                  <td>${activity.name}</td>
-                  <td>${activity.participants_count}</td>
-                  <td>${activity.seats_remaining}</td>
-                  <td>${trend}</td>
+                  <td>${escapeHtml(activity.name)}</td>
+                  <td>${safeNumber(activity.participants_count)}</td>
+                  <td>${safeNumber(activity.seats_remaining)}</td>
+                  <td>${escapeHtml(trend)}</td>
                 </tr>
               `;
             })
@@ -204,6 +221,7 @@ document.addEventListener("DOMContentLoaded", () => {
       Object.entries(activities).forEach(([name, details]) => {
         const activityCard = document.createElement("div");
         activityCard.className = "activity-card";
+        const encodedActivity = encodeURIComponent(name);
 
         const participantsHTML =
           details.participants.length > 0
@@ -213,7 +231,11 @@ document.addEventListener("DOMContentLoaded", () => {
                   ${details.participants
                     .map(
                       (email) =>
-                        `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                        `<li><span class="participant-email">${escapeHtml(
+                          email
+                        )}</span><button class="delete-btn" data-activity="${encodedActivity}" data-email="${encodeURIComponent(
+                          email
+                        )}">❌</button></li>`
                     )
                     .join("")}
                 </ul>
@@ -221,11 +243,13 @@ document.addEventListener("DOMContentLoaded", () => {
             : `<p><em>No participants yet</em></p>`;
 
         activityCard.innerHTML = `
-          <h4>${name}</h4>
-          <p>${details.description}</p>
-          <p><strong>Schedule:</strong> ${details.schedule}</p>
-          <p><strong>Availability:</strong> ${details.seats_remaining} spots left</p>
-          <p><strong>Participants:</strong> ${details.participants_count}/${details.max_participants}</p>
+          <h4>${escapeHtml(name)}</h4>
+          <p>${escapeHtml(details.description)}</p>
+          <p><strong>Schedule:</strong> ${escapeHtml(details.schedule)}</p>
+          <p><strong>Availability:</strong> ${safeNumber(details.seats_remaining)} spots left</p>
+          <p><strong>Participants:</strong> ${safeNumber(
+            details.participants_count
+          )}/${safeNumber(details.max_participants)}</p>
           <div class="participants-container">
             ${participantsHTML}
           </div>
@@ -252,8 +276,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function handleUnregister(event) {
     const button = event.target;
-    const activity = button.getAttribute("data-activity");
-    const email = button.getAttribute("data-email");
+    const activity = decodeURIComponent(button.getAttribute("data-activity"));
+    const email = decodeURIComponent(button.getAttribute("data-email"));
 
     try {
       const response = await fetch(
