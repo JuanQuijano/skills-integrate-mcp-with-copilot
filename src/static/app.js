@@ -57,7 +57,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function updateAuthControls() {
-    const isStaff = currentUser?.role === "staff";
     loginForm.classList.toggle("hidden", Boolean(currentUser));
     logoutButton.classList.toggle("hidden", !currentUser);
     signupForm.classList.toggle("hidden", currentUser?.role !== "student");
@@ -67,7 +66,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ? `Signed in as ${currentUser.email} (${currentUser.role})`
       : "Log in to sign up, review notifications, or coordinate activities.";
     document.querySelectorAll(".delete-btn").forEach((button) => {
-      button.classList.toggle("hidden", !isStaff);
+      button.classList.toggle("hidden", currentUser?.role !== "staff");
     });
   }
 
@@ -306,6 +305,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(hideMessage, 5000);
     } catch (error) {
       showMessage("Failed to unregister. Please try again.", "error");
+      setTimeout(hideMessage, 5000);
       console.error("Error unregistering:", error);
     }
   }
@@ -341,6 +341,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(hideMessage, 5000);
     } catch (error) {
       showMessage("Failed to sign up. Please try again.", "error");
+      setTimeout(hideMessage, 5000);
       console.error("Error signing up:", error);
     }
   });
@@ -358,6 +359,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const result = await response.json();
     if (!response.ok) {
       showMessage(result.detail || "Unable to log in", "error");
+      setTimeout(hideMessage, 5000);
       return;
     }
     currentUser = result;
