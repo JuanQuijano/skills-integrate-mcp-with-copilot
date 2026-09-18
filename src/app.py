@@ -8,6 +8,8 @@ for extracurricular activities at Mergington High School.
 import hashlib
 import json
 import secrets
+from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -27,6 +29,8 @@ app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
 
 users_file = current_dir / "users.json"
 sessions = {}
+notifications = []
+notification_id = 0
 
 
 class LoginRequest(BaseModel):
@@ -59,6 +63,19 @@ def require_role(role):
     return dependency
 
 
+def require_roles(*roles):
+    def dependency(user=Depends(get_current_user)):
+        if user["role"] not in roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+
+    return dependency
+
+
+def current_timestamp():
+    return datetime.now(timezone.utc).isoformat()
+
+
 @app.post("/auth/login")
 def login(credentials: LoginRequest):
     user = load_users().get(credentials.email)
@@ -70,8 +87,7 @@ def login(credentials: LoginRequest):
     sessions[token] = {"email": user["email"], "role": user["role"]}
     return {"token": token, "email": user["email"], "role": user["role"]}
 
-# In-memory activity database
-activities = {
+DEFAULT_ACTIVITIES = {
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
         "schedule": "Fridays, 3:30 PM - 5:00 PM",
@@ -129,6 +145,61 @@ activities = {
 }
 
 
+def build_activity_response(activity_name: str, activity: dict):
+    participant_count = len(activity["participants"])
+    seats_remaining = max(activity["max_participants"] - participant_count, 0)
+    occupancy_rate = 0.0
+    if activity["max_participants"] > 0:
+        occupancy_rate = round((participant_count / activity["max_participants"]) * 100, 1)
+    return {
+        "name": activity_name,
+        "description": activity["description"],
+        "schedule": activity["schedule"],
+        "max_participants": activity["max_participants"],
+        "participants": list(activity["participants"]),
+        "participants_count": participant_count,
+        "seats_remaining": seats_remaining,
+        "occupancy_rate": occupancy_rate,
+    }
+
+
+def build_activity_history(source_activities: dict):
+    timestamp = current_timestamp()
+    return {
+        name: [{"timestamp": timestamp, "participant_count": len(details["participants"])}]
+        for name, details in source_activities.items()
+    }
+
+
+def record_activity_history(activity_name: str):
+    activity_history[activity_name].append(
+        {
+            "timestamp": current_timestamp(),
+            "participant_count": len(activities[activity_name]["participants"]),
+        }
+    )
+
+
+def add_notification(audience: str, message: str, activity_name: str, student_email: str | None = None):
+    global notification_id
+    notification_id += 1
+    notifications.insert(
+        0,
+        {
+            "id": notification_id,
+            "audience": audience,
+            "message": message,
+            "activity_name": activity_name,
+            "student_email": student_email,
+            "timestamp": current_timestamp(),
+        },
+    )
+
+
+activities = deepcopy(DEFAULT_ACTIVITIES)
+activity_history = build_activity_history(activities)
+
+
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
@@ -136,7 +207,62 @@ def root():
 
 @app.get("/activities")
 def get_activities():
-    return activities
+    return {
+        activity_name: build_activity_response(activity_name, activity)
+        for activity_name, activity in activities.items()
+    }
+
+
+@app.get("/notifications")
+def get_notifications(user=Depends(get_current_user)):
+    if user["role"] in {"staff", "coordinator"}:
+        relevant_notifications = [
+            notification for notification in notifications if notification["audience"] == "coordinator"
+        ]
+    else:
+        relevant_notifications = [
+            notification
+            for notification in notifications
+            if notification["audience"] == "student" and notification["student_email"] == user["email"]
+        ]
+    return {"notifications": relevant_notifications[:10]}
+
+
+@app.get("/coordinator/dashboard")
+def get_coordinator_dashboard(user=Depends(require_roles("staff", "coordinator"))):
+    del user
+    activity_summaries = [
+        {
+            **build_activity_response(activity_name, activity),
+            "history": list(activity_history[activity_name]),
+        }
+        for activity_name, activity in activities.items()
+    ]
+    popular_activities = sorted(
+        activity_summaries,
+        key=lambda activity: (-activity["participants_count"], activity["name"]),
+    )
+    total_participants = sum(activity["participants_count"] for activity in activity_summaries)
+    total_seats_remaining = sum(activity["seats_remaining"] for activity in activity_summaries)
+    return {
+        "generated_at": current_timestamp(),
+        "overview": {
+            "total_activities": len(activity_summaries),
+            "total_participants": total_participants,
+            "total_seats_remaining": total_seats_remaining,
+            "full_activities": sum(activity["seats_remaining"] == 0 for activity in activity_summaries),
+        },
+        "popular_activities": [
+            {
+                "name": activity["name"],
+                "participants_count": activity["participants_count"],
+                "seats_remaining": activity["seats_remaining"],
+                "occupancy_rate": activity["occupancy_rate"],
+            }
+            for activity in popular_activities[:5]
+        ],
+        "activities": popular_activities,
+    }
 
 
 @app.post("/activities/{activity_name}/signup")
@@ -160,9 +286,21 @@ def signup_for_activity(activity_name: str, email: str,
             detail="Student is already signed up"
         )
 
+    if len(activity["participants"]) >= activity["max_participants"]:
+        raise HTTPException(status_code=400, detail="Activity is full")
+
     # Add student
     activity["participants"].append(email)
-    return {"message": f"Signed up {email} for {activity_name}"}
+    record_activity_history(activity_name)
+    add_notification("student", f"You're confirmed for {activity_name}.", activity_name, email)
+    add_notification("coordinator", f"{email} signed up for {activity_name}.", activity_name, email)
+    if len(activity["participants"]) == activity["max_participants"]:
+        add_notification("coordinator", f"{activity_name} is now full.", activity_name)
+
+    return {
+        "message": f"Signed up {email} for {activity_name}",
+        "seats_remaining": max(activity["max_participants"] - len(activity["participants"]), 0),
+    }
 
 
 @app.delete("/activities/{activity_name}/unregister")
@@ -185,4 +323,10 @@ def unregister_from_activity(activity_name: str, email: str,
 
     # Remove student
     activity["participants"].remove(email)
-    return {"message": f"Unregistered {email} from {activity_name}"}
+    record_activity_history(activity_name)
+    add_notification("student", f"Your registration for {activity_name} was canceled.", activity_name, email)
+    add_notification("coordinator", f"{email} was removed from {activity_name}.", activity_name, email)
+    return {
+        "message": f"Unregistered {email} from {activity_name}",
+        "seats_remaining": max(activity["max_participants"] - len(activity["participants"]), 0),
+    }

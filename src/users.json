@@ -8,5 +8,10 @@
     "email": "student@mergington.edu",
     "password_hash": "703b0a3d6ad75b649a28adde7d83c6251da457549263bc7ff45ec709b0a8448b",
     "role": "student"
+  },
+  {
+    "email": "coordinator@mergington.edu",
+    "password_hash": "adf13ef74379500ad68512219b28c6451d144bcf58c2e99ee8ce315b03a69e3c",
+    "role": "coordinator"
   }
 ]

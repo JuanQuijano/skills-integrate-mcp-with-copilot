@@ -6,63 +6,252 @@ document.addEventListener("DOMContentLoaded", () => {
   const loginForm = document.getElementById("login-form");
   const logoutButton = document.getElementById("logout-button");
   const authStatus = document.getElementById("auth-status");
+  const notificationsContainer = document.getElementById(
+    "notifications-container"
+  );
+  const notificationsList = document.getElementById("notifications-list");
+  const dashboardContainer = document.getElementById("dashboard-container");
+  const dashboardSummary = document.getElementById("dashboard-summary");
+  const popularityChart = document.getElementById("popularity-chart");
+  const activityMetrics = document.getElementById("activity-metrics");
   let currentUser = null;
 
   function authHeaders() {
-    return currentUser ? { Authorization: `Bearer ${currentUser.token}` } : {};
+    return currentUser
+      ? { Authorization: "Bearer " + currentUser.token }
+      : {};
   }
 
-  function updateAuthControls() {
-    const isStaff = currentUser?.role === "staff";
-    loginForm.classList.toggle("hidden", Boolean(currentUser));
-    logoutButton.classList.toggle("hidden", !currentUser);
-    signupForm.classList.toggle("hidden", currentUser?.role !== "student");
-    authStatus.textContent = currentUser
-      ? `Signed in as ${currentUser.email} (${currentUser.role})`
-      : "Log in to sign up or manage participants.";
-    document.querySelectorAll(".delete-btn").forEach((button) => {
-      button.classList.toggle("hidden", !isStaff);
+  function showMessage(text, type) {
+    messageDiv.textContent = text;
+    messageDiv.className = type;
+    messageDiv.classList.remove("hidden");
+  }
+
+  function hideMessage() {
+    messageDiv.classList.add("hidden");
+  }
+
+  function canViewDashboard() {
+    return (
+      currentUser &&
+      ["staff", "coordinator"].includes(currentUser.role)
+    );
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (character) => {
+      const entities = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
+      return entities[character];
     });
   }
 
-  // Function to fetch activities from API
+  function safeNumber(value) {
+    return Number.isFinite(Number(value)) ? Number(value) : 0;
+  }
+
+  function updateAuthControls() {
+    loginForm.classList.toggle("hidden", Boolean(currentUser));
+    logoutButton.classList.toggle("hidden", !currentUser);
+    signupForm.classList.toggle("hidden", currentUser?.role !== "student");
+    notificationsContainer.classList.toggle("hidden", !currentUser);
+    dashboardContainer.classList.toggle("hidden", !canViewDashboard());
+    authStatus.textContent = currentUser
+      ? `Signed in as ${currentUser.email} (${currentUser.role})`
+      : "Log in to sign up, review notifications, or coordinate activities.";
+    document.querySelectorAll(".delete-btn").forEach((button) => {
+      button.classList.toggle("hidden", currentUser?.role !== "staff");
+    });
+  }
+
+  function renderNotifications(notifications) {
+    if (!currentUser) {
+      notificationsList.innerHTML = "<p>Log in to see notifications.</p>";
+      return;
+    }
+
+    if (notifications.length === 0) {
+      notificationsList.innerHTML = "<p>No notifications yet.</p>";
+      return;
+    }
+
+    notificationsList.innerHTML = notifications
+      .map(
+        (notification) => `
+          <article class="notification-card">
+            <p>${escapeHtml(notification.message)}</p>
+            <small>${new Date(notification.timestamp).toLocaleString()}</small>
+          </article>
+        `
+      )
+      .join("");
+  }
+
+  function renderDashboard(dashboard) {
+    dashboardSummary.innerHTML = `
+      <article class="summary-card">
+        <strong>${dashboard.overview.total_activities}</strong>
+        <span>Activities</span>
+      </article>
+      <article class="summary-card">
+        <strong>${dashboard.overview.total_participants}</strong>
+        <span>Total participants</span>
+      </article>
+      <article class="summary-card">
+        <strong>${dashboard.overview.total_seats_remaining}</strong>
+        <span>Seats remaining</span>
+      </article>
+      <article class="summary-card">
+        <strong>${dashboard.overview.full_activities}</strong>
+        <span>Full activities</span>
+      </article>
+    `;
+
+    popularityChart.innerHTML = dashboard.popular_activities
+      .map(
+        (activity) => `
+          <div class="chart-row">
+            <div class="chart-label">
+              <span>${escapeHtml(activity.name)}</span>
+              <span>${safeNumber(activity.participants_count)}/${safeNumber(activity.participants_count) + safeNumber(activity.seats_remaining)}</span>
+            </div>
+            <div class="chart-bar-track">
+              <div class="chart-bar-fill" style="width: ${Math.max(0, Math.min(safeNumber(activity.occupancy_rate), 100))}%"></div>
+            </div>
+          </div>
+        `
+      )
+      .join("");
+
+    activityMetrics.innerHTML = `
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Activity</th>
+            <th>Participants</th>
+            <th>Seats left</th>
+            <th>Trend</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dashboard.activities
+            .map((activity) => {
+              const trend = activity.history
+                .map((entry) => `${safeNumber(entry.participant_count)}`)
+                .join(" → ");
+              return `
+                <tr>
+                  <td>${escapeHtml(activity.name)}</td>
+                  <td>${safeNumber(activity.participants_count)}</td>
+                  <td>${safeNumber(activity.seats_remaining)}</td>
+                  <td>${escapeHtml(trend)}</td>
+                </tr>
+              `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  async function fetchNotifications() {
+    if (!currentUser) {
+      renderNotifications([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/notifications", {
+        headers: authHeaders(),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.detail || "Unable to load notifications");
+      }
+      renderNotifications(result.notifications);
+    } catch (error) {
+      notificationsList.innerHTML = "<p>Unable to load notifications right now.</p>";
+      console.error("Error fetching notifications:", error);
+    }
+  }
+
+  async function fetchDashboard() {
+    if (!canViewDashboard()) {
+      dashboardSummary.innerHTML = "";
+      popularityChart.innerHTML = "";
+      activityMetrics.innerHTML = "";
+      return;
+    }
+
+    try {
+      const response = await fetch("/coordinator/dashboard", {
+        headers: authHeaders(),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.detail || "Unable to load dashboard");
+      }
+      renderDashboard(result);
+    } catch (error) {
+      dashboardSummary.innerHTML = "<p>Unable to load coordinator dashboard.</p>";
+      popularityChart.innerHTML = "";
+      activityMetrics.innerHTML = "";
+      console.error("Error fetching dashboard:", error);
+    }
+  }
+
+  async function refreshSignedInViews() {
+    await fetchNotifications();
+    await fetchDashboard();
+  }
+
   async function fetchActivities() {
     try {
       const response = await fetch("/activities");
       const activities = await response.json();
 
-      // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML =
+        '<option value="">-- Select an activity --</option>';
 
-      // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
         const activityCard = document.createElement("div");
         activityCard.className = "activity-card";
+        const encodedActivity = encodeURIComponent(name);
 
-        const spotsLeft =
-          details.max_participants - details.participants.length;
-
-        // Create participants HTML with delete icons instead of bullet points
         const participantsHTML =
           details.participants.length > 0
             ? `<div class="participants-section">
-              <h5>Participants:</h5>
-              <ul class="participants-list">
-                ${details.participants
-                  .map(
-                    (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
-                  )
-                  .join("")}
-              </ul>
-            </div>`
+                <h5>Participants:</h5>
+                <ul class="participants-list">
+                  ${details.participants
+                    .map(
+                      (email) =>
+                        `<li><span class="participant-email">${escapeHtml(
+                          email
+                        )}</span><button class="delete-btn" data-activity="${encodedActivity}" data-email="${encodeURIComponent(
+                          email
+                        )}">❌</button></li>`
+                    )
+                    .join("")}
+                </ul>
+              </div>`
             : `<p><em>No participants yet</em></p>`;
 
         activityCard.innerHTML = `
-          <h4>${name}</h4>
-          <p>${details.description}</p>
-          <p><strong>Schedule:</strong> ${details.schedule}</p>
-          <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
+          <h4>${escapeHtml(name)}</h4>
+          <p>${escapeHtml(details.description)}</p>
+          <p><strong>Schedule:</strong> ${escapeHtml(details.schedule)}</p>
+          <p><strong>Availability:</strong> ${safeNumber(details.seats_remaining)} spots left</p>
+          <p><strong>Participants:</strong> ${safeNumber(
+            details.participants_count
+          )}/${safeNumber(details.max_participants)}</p>
           <div class="participants-container">
             ${participantsHTML}
           </div>
@@ -70,14 +259,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
         activitiesList.appendChild(activityCard);
 
-        // Add option to select dropdown
         const option = document.createElement("option");
         option.value = name;
         option.textContent = name;
         activitySelect.appendChild(option);
       });
 
-      // Add event listeners to delete buttons
       document.querySelectorAll(".delete-btn").forEach((button) => {
         button.addEventListener("click", handleUnregister);
       });
@@ -89,11 +276,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Handle unregister functionality
   async function handleUnregister(event) {
     const button = event.target;
-    const activity = button.getAttribute("data-activity");
-    const email = button.getAttribute("data-email");
+    const activity = decodeURIComponent(button.getAttribute("data-activity"));
+    const email = decodeURIComponent(button.getAttribute("data-email"));
 
     try {
       const response = await fetch(
@@ -109,31 +295,21 @@ document.addEventListener("DOMContentLoaded", () => {
       const result = await response.json();
 
       if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
-
-        // Refresh activities list to show updated participants
-        fetchActivities();
+        showMessage(result.message, "success");
+        await fetchActivities();
+        await refreshSignedInViews();
       } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
+        showMessage(result.detail || "An error occurred", "error");
       }
 
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
+      setTimeout(hideMessage, 5000);
     } catch (error) {
-      messageDiv.textContent = "Failed to unregister. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage("Failed to unregister. Please try again.", "error");
+      setTimeout(hideMessage, 5000);
       console.error("Error unregistering:", error);
     }
   }
 
-  // Handle form submission
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -154,27 +330,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const result = await response.json();
 
       if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
+        showMessage(result.message, "success");
         signupForm.reset();
-
-        // Refresh activities list to show updated participants
-        fetchActivities();
+        await fetchActivities();
+        await refreshSignedInViews();
       } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
+        showMessage(result.detail || "An error occurred", "error");
       }
 
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
+      setTimeout(hideMessage, 5000);
     } catch (error) {
-      messageDiv.textContent = "Failed to sign up. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage("Failed to sign up. Please try again.", "error");
+      setTimeout(hideMessage, 5000);
       console.error("Error signing up:", error);
     }
   });
@@ -191,23 +358,27 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     const result = await response.json();
     if (!response.ok) {
-      messageDiv.textContent = result.detail || "Unable to log in";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage(result.detail || "Unable to log in", "error");
+      setTimeout(hideMessage, 5000);
       return;
     }
     currentUser = result;
     loginForm.reset();
     updateAuthControls();
-    messageDiv.classList.add("hidden");
+    hideMessage();
+    await refreshSignedInViews();
   });
 
   logoutButton.addEventListener("click", () => {
     currentUser = null;
     updateAuthControls();
+    renderNotifications([]);
+    dashboardSummary.innerHTML = "";
+    popularityChart.innerHTML = "";
+    activityMetrics.innerHTML = "";
   });
 
-  // Initialize app
   updateAuthControls();
+  renderNotifications([]);
   fetchActivities();
 });
